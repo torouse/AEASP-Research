@@ -1,0 +1,96 @@
+CRIME DATA PROCESSING SUMMARY REPORT
+==================================================
+Generated: 2025-06-17 16:43:56
+
+PROCESSING STATISTICS BY YEAR:
+------------------------------
+
+Year 2012:
+  Initial Load: 9498 → 9498 (100.0% retained)
+  Missing Data Filter: 9498 → 9491 (99.9% retained)
+  Numeric Conversion: 9491 → 9491 (100.0% retained)
+  Final Output: 9491 → 9491 (100.0% retained)
+
+Year 2013:
+  Initial Load: 9302 → 9302 (100.0% retained)
+  Missing Data Filter: 9302 → 9292 (99.9% retained)
+  Numeric Conversion: 9292 → 9292 (100.0% retained)
+  Final Output: 9292 → 9292 (100.0% retained)
+
+Year 2014:
+  Initial Load: 9364 → 9364 (100.0% retained)
+  Missing Data Filter: 9364 → 9348 (99.8% retained)
+  Numeric Conversion: 9348 → 9348 (100.0% retained)
+  Final Output: 9348 → 9348 (100.0% retained)
+
+Year 2015:
+  Initial Load: 9405 → 9405 (100.0% retained)
+  Missing Data Filter: 9405 → 9395 (99.9% retained)
+  Numeric Conversion: 9395 → 9395 (100.0% retained)
+  Final Output: 9395 → 9395 (100.0% retained)
+
+Year 2016:
+  Initial Load: 9590 → 9590 (100.0% retained)
+  Missing Data Filter: 9590 → 9579 (99.9% retained)
+  Numeric Conversion: 9579 → 9579 (100.0% retained)
+  Final Output: 9579 → 9579 (100.0% retained)
+
+Year 2017:
+  Initial Load: 9589 → 9589 (100.0% retained)
+  Missing Data Filter: 9589 → 9579 (99.9% retained)
+  Numeric Conversion: 9579 → 9579 (100.0% retained)
+  Final Output: 9579 → 9579 (100.0% retained)
+
+Year 2018:
+  Initial Load: 9262 → 9262 (100.0% retained)
+  Missing Data Filter: 9262 → 9251 (99.9% retained)
+  Numeric Conversion: 9251 → 9251 (100.0% retained)
+  Final Output: 9251 → 9251 (100.0% retained)
+
+Year 2019:
+  Initial Load: 8113 → 8113 (100.0% retained)
+  Missing Data Filter: 8113 → 8105 (99.9% retained)
+  Numeric Conversion: 8105 → 8105 (100.0% retained)
+  Final Output: 8105 → 8105 (100.0% retained)
+
+Year 2020:
+  Initial Load: 7700 → 7700 (100.0% retained)
+
+Year 2021:
+  Initial Load: 5876 → 5876 (100.0% retained)
+  Missing Data Filter: 5876 → 5873 (99.9% retained)
+  Numeric Conversion: 5873 → 5873 (100.0% retained)
+  Final Output: 5873 → 5873 (100.0% retained)
+
+Year 2022:
+  Initial Load: 7878 → 7878 (100.0% retained)
+  Missing Data Filter: 7878 → 7876 (100.0% retained)
+  Numeric Conversion: 7876 → 7876 (100.0% retained)
+  Final Output: 7876 → 7876 (100.0% retained)
+
+Year 2023:
+  Initial Load: 8367 → 8367 (100.0% retained)
+  Missing Data Filter: 8367 → 8365 (100.0% retained)
+  Numeric Conversion: 8365 → 8365 (100.0% retained)
+  Final Output: 8365 → 8365 (100.0% retained)
+
+DROPPED CITIES SUMMARY:
+------------------------------
+Total dropped: 11079
+
+By Reason:
+  Zero violent crime reported (kept in data): 10989
+  Missing City or Violent Crime data: 90
+
+By Year:
+  2012: 1112
+  2013: 1067
+  2014: 1084
+  2015: 1082
+  2016: 1150
+  2017: 1132
+  2018: 1153
+  2019: 994
+  2021: 539
+  2022: 852
+  2023: 914
