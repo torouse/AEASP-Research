@@ -2,8 +2,8 @@ library(tidyverse)
 library(dplyr)
 library(stringr)
 
-#crime_data <- read.csv("/Users/jaydenrivera/Documents/Documents - Jayden's MacBook Air/1. Projects/research/AEASP-Research/Data/ACS/crime_to_check.csv")
-#df_acs <- read.csv("/Users/jaydenrivera/Documents/Documents - Jayden's MacBook Air/1. Projects/research/AEASP-Research/Data/ACS/ready_to_merge.csv")
+crime_data <- read.csv("Data/ACS/crime_to_check.csv")
+df_acs <- read.csv("Data/ACS/ready_to_merge.csv")
 
 # Remove the fbi notes that got pulled in
 filtered_crime_data <- crime_data %>%
