@@ -74,6 +74,12 @@ common_city_states <- intersect(
   unique(complete_cities_data$city_state)
 )
 
+test_intersect <- intersect(
+  unique(filtered_crime_data$city_state), 
+  unique(complete_cities_data_acs$city_state)
+  )
+
+
 cat("\nNumber of common city-states:", length(common_city_states))
 if(length(common_city_states) > 0) {
   cat("\nFirst few common city-states:\n")
@@ -103,9 +109,21 @@ filtered_acs <- complete_cities_data_acs %>%
 filtered_crime <- complete_cities_data %>%
   filter(city_state %in% common_city_states)
 
+test_crime <- filtered_crime_data %>% 
+  filter(city_state %in% test_intersect)
+
+test_acs <- complete_cities_data_acs %>%
+  filter(city_state %in% test_intersect)
+
+
 # Use a proper join instead of direct assignment
 merged_data <- filtered_acs %>%
   left_join(filtered_crime %>% select(city_state, Year, Violent.Crime), 
+            by = c("city_state" = "city_state", "year" = "Year")) %>%
+  rename(violent_crime = Violent.Crime)
+
+test_merged<- test_acs %>%
+  left_join(test_crime %>% select(city_state, Year, Violent.Crime), 
             by = c("city_state" = "city_state", "year" = "Year")) %>%
   rename(violent_crime = Violent.Crime)
 
@@ -124,7 +142,7 @@ grants_data$issue_year <- substr(grants_data$period_of_performance_start_date, 1
 grants2022 <- filter(grants_data, issue_year== 2022)
 
 #Select necessary columns and clean city and state names
-filtered_grants <- grants2021 [,c("total_funding_amount","issue_year", "recipient_city_name", "recipient_state_name","award_id_fain")]
+filtered_grants <- grants2022 [,c("total_funding_amount","issue_year", "recipient_city_name", "recipient_state_name","award_id_fain")]
 filtered_grants <- filtered_grants %>%
   mutate(
     City_clean = str_to_title(str_trim(recipient_city_name)),
@@ -152,13 +170,27 @@ common_grant_city_states <- intersect(
   unique(merged_data$city_state)
 )
 
+test_grant <- intersect(
+  unique(total_cvipi$city_state), 
+  unique(test_merged$city_state)
+)
+
 grants_merged <- merged_data %>%
   left_join(filter(total_cvipi, city_state %in% common_grant_city_states), 
             by = c("city_state" = "city_state")) %>%
   rename(funding2022 = total_funding_amount)
 
+test_grants_merged <- test_merged %>%
+  left_join(filter(total_cvipi, city_state %in% common_grant_city_states), 
+            by = c("city_state" = "city_state")) %>%
+  rename(funding2022 = total_funding_amount)
+
+
 #If funding2022 is NA change it to 0
 grants_merged$funding2022[is.na(grants_merged$funding2022)] <- 0
+
+test_grants_merged$funding2022[is.na(test_grants_merged$funding2022)] <- 0
+
 
 #Summary Statistics!
 
@@ -168,3 +200,11 @@ summary()
 filter(grants_merged, funding2022>0) %>% 
 summary()
 
+filter(filter(grants_merged, funding2022>0) %>% 
+summary()
+         
+filter(test_grants_merged, funding2022>0) %>% 
+summary()
+
+filter(test_grants_merged, funding2022>0) %>% 
+  summary()
