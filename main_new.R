@@ -181,7 +181,7 @@ grants_merged <- merged_data %>%
   rename(funding2022 = total_funding_amount)
 
 test_grants_merged <- test_merged %>%
-  left_join(filter(total_cvipi, city_state %in% common_grant_city_states), 
+  left_join(filter(total_cvipi, city_state %in% test_grant), 
             by = c("city_state" = "city_state")) %>%
   rename(funding2022 = total_funding_amount)
 
