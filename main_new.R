@@ -1,6 +1,8 @@
 library(tidyverse)
 library(dplyr)
 library(stringr)
+#Import summary statistics command
+source("sumstats.R")
 
 crime_data <- read.csv("Data/ACS/crime_to_check.csv")
 df_acs <- read.csv("Data/ACS/ready_to_merge.csv")
@@ -74,6 +76,8 @@ common_city_states <- intersect(
   unique(complete_cities_data$city_state)
 )
 
+# Get city-state combinations that exist in both acs dataset and unbalanced crime data
+
 test_intersect <- intersect(
   unique(filtered_crime_data$city_state), 
   unique(complete_cities_data_acs$city_state)
@@ -109,6 +113,9 @@ filtered_acs <- complete_cities_data_acs %>%
 filtered_crime <- complete_cities_data %>%
   filter(city_state %in% common_city_states)
 
+#Created a filtered dataframe with only common city-state combinations without
+#filtering out cities with missing crime data
+
 test_crime <- filtered_crime_data %>% 
   filter(city_state %in% test_intersect)
 
@@ -122,6 +129,7 @@ merged_data <- filtered_acs %>%
             by = c("city_state" = "city_state", "year" = "Year")) %>%
   rename(violent_crime = Violent.Crime)
 
+# Use a proper join instead of direct assignment for acs and unbalanced crime data
 test_merged<- test_acs %>%
   left_join(test_crime %>% select(city_state, Year, Violent.Crime), 
             by = c("city_state" = "city_state", "year" = "Year")) %>%
@@ -164,21 +172,22 @@ total_grants <- filtered_grants %>%
   select(total_funding_amount, city_state) %>% 
   aggregate(.~city_state, sum)
 
+grants_merged <- merged_data %>%
+  left_join(filter(total_cvipi, city_state %in% common_grant_city_states), 
+            by = c("city_state" = "city_state")) %>%
+  rename(funding2022 = total_funding_amount)
+
 #Filter out cities that are in both merged_data and total_cvipi and merge the two datasets
 common_grant_city_states <- intersect(
   unique(total_cvipi$city_state), 
   unique(merged_data$city_state)
 )
 
+#Filter out cities that are in both test_merged and total_cvipi and merge the two datasets
 test_grant <- intersect(
   unique(total_cvipi$city_state), 
   unique(test_merged$city_state)
 )
-
-grants_merged <- merged_data %>%
-  left_join(filter(total_cvipi, city_state %in% common_grant_city_states), 
-            by = c("city_state" = "city_state")) %>%
-  rename(funding2022 = total_funding_amount)
 
 test_grants_merged <- test_merged %>%
   left_join(filter(total_cvipi, city_state %in% test_grant), 
@@ -192,19 +201,17 @@ grants_merged$funding2022[is.na(grants_merged$funding2022)] <- 0
 test_grants_merged$funding2022[is.na(test_grants_merged$funding2022)] <- 0
 
 
-#Summary Statistics!
-
+#Summary Statistics from 8 treated cities using balanced crime data
 filter(grants_merged, funding2022>0) %>% 
-summary()
+sumstats()
          
-filter(grants_merged, funding2022>0) %>% 
-summary()
+filter(grants_merged, funding2022==0) %>% 
+sumstats()
 
-filter(filter(grants_merged, funding2022>0) %>% 
-summary()
-         
-filter(test_grants_merged, funding2022>0) %>% 
-summary()
+#Summary statistics for 33 treated cities received from using unbalanced crime data
 
 filter(test_grants_merged, funding2022>0) %>% 
-  summary()
+sumstats()
+         
+filter(test_grants_merged, funding2022==0) %>% 
+sumstats()
