@@ -88,7 +88,7 @@ def get_crime_schema():
             "Violent Crime": "Violent Crime Total",
             "Components": [
                 "Murder and nonnegligent manslaughter",
-                "Rape 1",
+                "Rape1",
                 "Robbery",
                 "Aggravated assault"
             ]

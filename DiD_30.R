@@ -4,6 +4,9 @@ library(tidyverse)
 library(dplyr)
 library(stringr)
 library(zoo)
+library(broom)
+library(fixest)
+library(modelsummary)
 
 #Import summary statistics command
 source("sumstats.R")
@@ -42,7 +45,7 @@ print(head(unique(df_acs$city_state), 10))
 cat("\nTotal unique city-states in crime data:", length(unique(filtered_crime_data$city_state)))
 cat("\nTotal unique city-states in ACS data:", length(unique(df_acs$city_state)))
 
-#Remove one incorrect observation in Crime dataset and treat years as numeric
+# Remove one incorrect observation in Crime dataset and treat years as numeric
 filtered_crime_data <- filtered_crime_data[-1,]
 df_acs$year <- sapply(df_acs$year, as.numeric)
 filtered_crime_data$Year <- sapply(filtered_crime_data$Year, as.numeric)
@@ -81,7 +84,6 @@ common_city_states <- intersect(
 )
 
 # Get city-state combinations that exist in both acs dataset and unbalanced crime data
-
 test_intersect <- intersect(
   unique(filtered_crime_data$city_state), 
   unique(complete_cities_data_acs$city_state)
@@ -150,7 +152,7 @@ grants_data <- read.csv("Data/Grants/Assistance_PrimeAwardSummaries_2025-06-25_H
 #Create issue year
 grants_data$issue_year <- substr(grants_data$period_of_performance_start_date, 1, 4)
 
-#filter out by 2021 issue year
+#filter out by 2022 issue year
 grants2022 <- filter(grants_data, issue_year== 2022)
 
 #Select necessary columns and clean city and state names
@@ -193,45 +195,114 @@ test_grants_merged <- test_merged %>%
             by = c("city_state" = "city_state")) %>%
   rename(funding2022 = total_funding_amount)
 
+# RAW MERGED DATA FOR 2022 -> test_grants_merged
 
-#If funding2022 is NA change it to 0
-
+# If funding2022 is NA change it to 0
 test_grants_merged$funding2022[is.na(test_grants_merged$funding2022)] <- 0
 
-#interpolate violent crime data
+## Independents variables have 1% of obs missing, so we carry backwards
+### Check for NA values
+columns_to_carry <- c(
+  "white_alone",
+  "education_universe_25plus",
+  "no_schooling_completed",
+  "high_school_graduate",
+  "ged_alternative_credential",
+  "some_college_less_than_1_year",
+  "some_college_1_or_more_years",
+  "associate_degree",
+  "bachelor_degree",
+  "income_below_poverty_level"
+)
 
-grants_interpolated <- test_grants_merged
+test_grants_merged %>%
+  group_by(year) %>%
+  summarise(across(all_of(columns_to_carry), ~ sum(is.na(.)))) %>%
+  arrange(year)
 
-grants_interpolated$violent_crime <- na.approx(test_grants_merged$violent_crime)
+## Carry Covariates
+test_grants_merged <- test_grants_merged %>% 
+  group_by(name) %>%                       
+  arrange(year, .by_group = TRUE) %>%        
+  fill(all_of(columns_to_carry),            
+       .direction = "downup") %>%            
+  ungroup()
 
-#Filters out total population outliers
+### Check for NA again
+test_grants_merged %>%
+  group_by(year) %>%
+  summarise(across(all_of(columns_to_carry), ~ sum(is.na(.)))) %>%
+  arrange(year)
 
-grants_no_outliers <- filter(grants_interpolated, total_population < 2500000) %>% 
-                      filter(funding2022>0 | total_population > 275000)
+# Linear interpolation
+## Drop NAs pre-treatment (pre-2022)
+test_grants_merged <- test_grants_merged %>%
+  filter(!(is.na(violent_crime) & year > 2021))
+
+## Interpolate the rest 
+test_grants_merged$violent_crime <- na.approx(test_grants_merged$violent_crime)
+
+# Examine any remaining NAs
+city_na_status <- test_grants_merged %>% 
+  group_by(name) %>%                                           # one row per city
+  summarise(
+    any_na   = any(across(all_of(columns_to_carry), ~ is.na(.))),    # does this city still have an NA?
+    treated  = any(funding2022 == 1, na.rm = TRUE),            # ever treated?
+    .groups  = "drop"
+  ) %>% 
+  filter(any_na)                                               # keep only cities with NAs
+
+city_na_status
+## We find only 6 control cities have NAs, lets drop them
+names_to_drop <- city_na_status$name
+
+test_grants_merged <- test_grants_merged %>%
+  filter(! name %in% names_to_drop)
+# Check again for NAs
+city_na_status <- test_grants_merged %>% 
+  group_by(name) %>%                                           # one row per city
+  summarise(
+    any_na   = any(across(all_of(columns_to_carry), ~ is.na(.))),    # does this city still have an NA?
+    treated  = any(funding2022 == 1, na.rm = TRUE),            # ever treated?
+    .groups  = "drop"
+  ) %>% 
+  filter(any_na)
+
+if (nrow(city_na_status) == 0) {
+  message("🎉 No more NAs in the inspected columns!")
+} else {
+  print(city_na_status)
+}
+
+# No more NAs
+
+## Split for outliers here later
+
+# Rename the data for simplicity in modelling
+funded2022 <- test_grants_merged
 
 # Find name combinations that appear in all years
-grants_no_outliers_fullyears <- grants_no_outliers %>% 
+years_total <- n_distinct(funded2022$year)
+
+funded2022 <- funded2022 %>% 
   group_by(name) %>% 
-  count() %>% 
-  ungroup() %>% 
-  filter(n == 9) %>% 
-  pull(name)
+  filter(n_distinct(year) == years_total) %>% 
+  ungroup()
 
-# Create new table with only those name combinations that appear in all years
-grants_no_outliers <- grants_no_outliers %>%
-  filter(name %in% grants_no_outliers_fullyears)
+# Summary statistics for 30 treated cities received from using unbalanced crime data
 
-#Summary statistics for 30 treated cities received from using unbalanced crime data
-
-filter(grants_no_outliers, funding2022>0) %>% 
+filter(funded2022, funding2022>0) %>% 
   sumstats()
 
-filter(grants_no_outliers, funding2022==0) %>% 
+filter(funded2022, funding2022==0) %>% 
   sumstats()
 
 # Modelling
 # Rename for simplicity
-grants <- filter(grants_no_outliers, year != 2021)
+grants <- funded2022
+
+# adjust grants per capita
+grants$funding <- (grants$funding2022 / grants$total_population) * 100000
 
 # Switch grant $ to binary
 grants$funding2022 <- ifelse(grants$funding2022 >0, 1, 0)
@@ -252,6 +323,9 @@ grants_did <- grants %>%
     ## Poverty --------------------------------------------------------------
     poverty_rate        = income_below_poverty_level / total_population)
 
+# Violent Crime per capita
+grants_did$violent_crime_pc <- (grants_did$violent_crime / grants_did$total_population) * 100000
+
 # Create treatment columns for DiD regression
 grants_did <- grants_did %>% 
   ## 1. City–level treatment status: 1 if the city ever got funding in 2022
@@ -265,47 +339,48 @@ grants_did <- grants_did %>%
   ## 3. DiD interaction: 1 only for treated cities *and* post period
   mutate(D = treated & post)
 
-# Regular Model
-did_2022 <- lm(violent_crime ~ treated * post + factor(name) + factor(year),
-   data = grants_did)
-
-did_2022_fe <- did_2022_control_fe <- feols(violent_crime ~ treated * post | name + year, cluster = ~name, data = grants_did)
-
-# Controlled Model
-did_2022_control <- lm(violent_crime ~ treated * post + pct_white + pct_bach_degree +
-  unemployment_rate + poverty_rate + factor(name) + factor(year), data = grants_did)
-
-# Controlled Model with fixest library (cleaner output same exact model)
-did_2022_control_fe <- feols(violent_crime ~ treated * post + pct_white + pct_bach_degree +
-                  + unemployment_rate + poverty_rate |
-                  name + year,
-                cluster = ~name,
-                data = grants_did)
-
-# Get treatment Effects
-## Regular
-Reg_coefs <- summary(did_2022)$coefficients
-Reg_coefs[grep("treated:post", rownames(Reg_coefs)), ]
-## Controlled Model
-Con_coefs <- summary(did_2022_control)$coefficients
-Con_coefs[grep("treated:post", rownames(Con_coefs)), ]
-
 # Parallel Trends
 avg <- grants_did %>% 
   group_by(year, treated) %>%                
-  summarise(mean_y = mean(violent_crime, na.rm = TRUE), .groups = "drop")
+  summarise(mean_y = mean(violent_crime_pc, na.rm = TRUE), .groups = "drop")
 
 ggplot(avg, aes(year, mean_y, colour = factor(treated))) +
   geom_line() + geom_point() +
   scale_colour_manual(values = c("0" = "grey40", "1" = "steelblue"),
                       labels  = c("Control", "Treated"),
                       name    = "") +
-  labs(y = "Mean violent‐crime rate")
+  labs(y = "Violent Crime per 100k")
 
 # Empirical Parallel Trends
 pre <- grants_did %>% filter(year < 2022)
 
-summary(
-  lm(violent_crime ~ treated * year + factor(place_id) + factor(year), data = pre)
-)
+# Perform Regression
+# Per capita - Base
+model_pc <- feols(violent_crime_pc ~ treated * post | name + year, cluster = ~name, data = grants_did)
+
+# Per capita - Controls
+model_pc_control <- feols(violent_crime_pc ~ treated * post + pct_white + pct_bach_degree +
+                  + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did)
+
+# Controlling for grants per 100k
+model_pc_control_grant <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
+                           + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did)
+
+## Self contained resid plot ------------------------------------------------------------
+# --- 1. Re-run the two models -------------------------------------------------
+# run any new models here (outlier vs non-outlier)
+# --- 2. Grab the residuals ----------------------------------------------------
+#r$res_pc_control <- resid(model_pc_control)   # residuals from the raw-count model
+#r$res_pc_control_grant  <- resid(model_pc_control_grant)    # residuals from the per-capita model
+
+# --- 3. Plot residual on residual --------------------------------------------
+#plot(
+#  r$res_pc_control, r$res_control_grant,
+#  xlab = "Residuals (raw violent_crime)",
+#  ylab = "Residuals (violent_crime_pc)",
+#  main = "Residual-on-Residual Plot",
+#  pch  = 19, cex = 0.6
+#)
+#abline(lm(res_pc ~ res_raw, data = pre), lwd = 2, lty = 2)  # OLS fit
+#abline(0, 1, col = "grey50")                                # 45-degree line
 

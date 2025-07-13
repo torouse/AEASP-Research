@@ -86,7 +86,16 @@ def consolidate_crime_data_efficiently(start_year, end_year, data_directory, out
             print(f"Processing: {os.path.basename(full_file_path)}")
             
             engine = 'openpyxl' if full_file_path.endswith('.xlsx') else 'xlrd'
-            df_original = pd.read_excel(full_file_path, skiprows=3, engine=engine)
+            
+            # Special handling for 2020 file which has headers in row 1
+            if year == 2020:
+                df_original = pd.read_excel(full_file_path, skiprows=4, engine=engine)
+                # Set the headers from the first row
+                df_original.columns = df_original.iloc[0]
+                df_original = df_original.iloc[1:].reset_index(drop=True)
+            else:
+                df_original = pd.read_excel(full_file_path, skiprows=3, engine=engine)
+            
             df = df_original.copy()
             
             initial_row_count = len(df)
