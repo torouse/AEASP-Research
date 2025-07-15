@@ -7,6 +7,12 @@ library(zoo)
 library(broom)
 library(fixest)
 library(modelsummary)
+library(MatchIt)
+library(gtsummary)
+library(gt)
+remotes::install_github("UrbanInstitute/urbnthemes", build_vignettes = TRUE)
+library(urbnthemes)
+set_urbn_defaults(base_size = 16)
 
 #Import summary statistics command
 source("sumstats.R")
@@ -325,6 +331,14 @@ grants_did <- grants %>%
 
 # Violent Crime per capita
 grants_did$violent_crime_pc <- (grants_did$violent_crime / grants_did$total_population) * 100000
+grants_did$log_v_crime_rate <- log((grants_did$violent_crime / grants_did$total_population) * 100000)
+
+#Sum stats for per capita covariates
+filter(grants_did, funding2022==1) %>% 
+  sumstats()
+
+filter(grants_did, funding2022==0) %>% 
+  sumstats()
 
 # Create treatment columns for DiD regression
 grants_did <- grants_did %>% 
@@ -344,7 +358,19 @@ avg <- grants_did %>%
   group_by(year, treated) %>%                
   summarise(mean_y = mean(violent_crime_pc, na.rm = TRUE), .groups = "drop")
 
+avglog <- grants_did %>% 
+  group_by(year, treated) %>%                
+  summarise(mean_y = mean(log_v_crime_rate, na.rm = TRUE), .groups = "drop")
+
+
 ggplot(avg, aes(year, mean_y, colour = factor(treated))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = c("0" = "grey40", "1" = "steelblue"),
+                      labels  = c("Control", "Treated"),
+                      name    = "") +
+  labs(y = "Violent Crime per 100k")
+
+ggplot(avglog, aes(year, mean_y, colour = factor(treated))) +
   geom_line() + geom_point() +
   scale_colour_manual(values = c("0" = "grey40", "1" = "steelblue"),
                       labels  = c("Control", "Treated"),
@@ -354,7 +380,7 @@ ggplot(avg, aes(year, mean_y, colour = factor(treated))) +
 # Empirical Parallel Trends
 pre <- grants_did %>% filter(year < 2022)
 
-# Perform Regression
+# Perform Regression 
 # Per capita - Base
 model_pc <- feols(violent_crime_pc ~ treated * post | name + year, cluster = ~name, data = grants_did)
 
@@ -362,9 +388,17 @@ model_pc <- feols(violent_crime_pc ~ treated * post | name + year, cluster = ~na
 model_pc_control <- feols(violent_crime_pc ~ treated * post + pct_white + pct_bach_degree +
                   + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did)
 
+# Controlling for grants per 100k without controls
+model_pc_grant <- feols(violent_crime_pc ~ funding * post | name + year, cluster = ~name, data = grants_did)
+
 # Controlling for grants per 100k
 model_pc_control_grant <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
                            + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did)
+
+model_pc_popcon_grant <- feols(violent_crime_pc ~ funding * post + total_population | name + year, cluster = ~name, data = grants_did)
+
+logmodel_pc_control_grant <- feols(log_v_crime_rate ~ funding * post + pct_white + pct_bach_degree +
+                                  + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did)
 
 ## Self contained resid plot ------------------------------------------------------------
 # --- 1. Re-run the two models -------------------------------------------------
@@ -383,4 +417,320 @@ model_pc_control_grant <- feols(violent_crime_pc ~ funding * post + pct_white + 
 #)
 #abline(lm(res_pc ~ res_raw, data = pre), lwd = 2, lty = 2)  # OLS fit
 #abline(0, 1, col = "grey50")                                # 45-degree line
+
+#--------------------------------------------------------------------------------------------------
+
+#Rerunning everything after filtering out cities using propensity score matching
+
+#Create a dataset with all the mean values of the key variables for all cities
+grants_match <- grants_did %>% 
+  group_by(name) %>%                
+  summarise(violent_crime_pc = mean(violent_crime_pc, na.rm = TRUE),
+            total_population = mean(total_population, na.rm = TRUE),
+            pct_white = mean(pct_white, na.rm = TRUE),
+            pct_bach_degree = mean(pct_bach_degree, na.rm = TRUE),
+            unemployment_rate = mean(unemployment_rate, na.rm = TRUE),
+            poverty_rate = mean(poverty_rate, na.rm = TRUE),
+            funding2022 = mean(funding2022, na.rm = TRUE),
+            .groups = "drop")
+
+#Find two control cities for each treated city by choosing control cities that
+#are most likely to be chosen to receive funding based on total population and
+#present results
+funding_match <- matchit(funding2022 ~ total_population,
+                         data = grants_match, method = "nearest", distance ="glm",
+                         ratio = 2,
+                         replace = FALSE)
+
+summary(funding_match)
+
+#Compile all the names of the matched control cities into a vector
+grants_did_psm_controls <- grants_match[funding_match[["match.matrix"]],]$name
+
+
+#Filter out the grants_did dataset by cities that receive funding or were chosen
+#as matched controls
+grants_did_psm <- filter(grants_did, funding2022==1 | name %in% grants_did_psm_controls)
+
+
+#Sum stats for per capita covariates from the PSM chosen control group
+filter(grants_did_psm, funding2022==1) %>% 
+  sumstats()
+
+filter(grants_did_psm, funding2022==0) %>% 
+  sumstats()
+
+#Create summary statistics table
+grants_did_psm <- grants_did_psm %>% mutate(CVIP_funding = case_when(
+  funding2022 == 0 ~ "Did Not Receive CVIP Funding",
+  funding2022 == 1 ~ "Received CVIP Funding"))
+
+my_theme <-
+  list(
+    "tbl_summary-str:default_con_type" = "continuous2",
+    "tbl_summary-str:continuous_stat" = c(
+      "{median} ({p25} - {p75})",
+      "{mean} ({sd})",
+      "{min} - {max}"
+    ),
+   )
+set_gtsummary_theme(my_theme)
+
+SummaryStats <- group_by(grants_did_psm, CVIP_funding) %>%                
+  select(funding, violent_crime_pc, total_population) %>% 
+tbl_summary(
+    by = CVIP_funding,
+    list(
+      violent_crime_pc ~ "Crime Rate per 100,000 People",
+      total_population ~ "Total Population",
+      funding ~ "CVIP Grant Spending per 100,000 People"),
+    type = all_continuous() ~ "continuous2",
+    statistic = all_continuous() ~ c(
+      "{median}",
+      "{mean} ({sd})")
+  ) %>%
+  bold_labels() %>%
+  modify_header(label ~ "**Variable**") %>% 
+  as_gt()
+
+gtsave(SummaryStats, "SummaryStatistics.png")
+
+
+# Create treatment columns for PSM chosen control group DiD regression
+grants_did_psm <- grants_did_psm %>% 
+  ## 1. City–level treatment status: 1 if the city ever got funding in 2022
+  group_by(place_id) %>%                           
+  mutate(treated = as.integer(any(funding2022 > 0))) %>% 
+  ungroup() %>% 
+  
+  ## 2. Post-treatment dummy: 1 for years on/after 2022
+  mutate(post = year >= 2022) %>% 
+  
+  ## 3. DiD interaction: 1 only for treated cities *and* post period
+  mutate(D = treated & post)
+
+# Parallel Trends for Violent Crim Rate DiD with PSM control group
+avg_psm <- grants_did_psm %>% 
+  group_by(year, treated) %>%                
+  summarise(mean_y = mean(violent_crime_pc, na.rm = TRUE), .groups = "drop")
+
+
+ParallelTrendsPlot <- ggplot(avg_psm, aes(year, mean_y, colour = factor(treated))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = c("0" = "grey40", "1" = "gold"),
+                      labels  = c("Control", "Treated"),
+                      name    = "") +
+  labs(y = "Violent Crime per 100k", x= "Year")
+
+ggsave(filename = "ParallelTrendsPlot.png", plot = ParallelTrendsPlot, height = 3.5, width = 4)
+
+# Parallel Trends for Logged Violent Crime RateDiD with PSM control group
+
+logavg_psm <- grants_did_psm %>% 
+  group_by(year, treated) %>%                
+  summarise(mean_y = mean(log_v_crime_rate, na.rm = TRUE), .groups = "drop")
+
+LogParallelTrendsPlot <- ggplot(logavg_psm, aes(year, mean_y, colour = factor(treated))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = c("0" = "grey40", "1" = "gold"),
+                      labels  = c("Control", "Treated"),
+                      name    = "") +
+  labs(y = "Logged Violent Crime per 100k", x= "Year")
+
+ggsave(filename = "LogParallelTrendsPlot.png", plot = LogParallelTrendsPlot, height = 3.5, width = 4)
+
+
+# Perform Regressions with PSM chosen control group
+# Per capita - Base
+model_pc_psm <- feols(violent_crime_pc ~ treated * post | name + year, cluster = ~name, data = grants_did_psm)
+
+# Per capita - Controls
+model_pc_control_psm <- feols(violent_crime_pc ~ treated * post + pct_white + pct_bach_degree +
+                                + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_psm)
+
+
+# OPTIMAL MODELS
+#Controlling for grants per 100k without using controls
+model_pc_grant_psm <- feols(violent_crime_pc ~ funding * post | name + year, cluster = ~name, data = grants_did_psm)
+
+#Regressing log crime rate and controlling for grants per 100k without using controls
+logmodel_pc_grant_psm <- feols(log_v_crime_rate ~ funding * post | name + year, cluster = ~name, data = grants_did_psm)
+
+#Create regression output table
+Model1<- tbl_regression(model_pc_grant_psm,
+                        include = "funding:post",
+                        estimate_fun = purrr::partial(style_ratio, digits = 9)) %>% 
+  modify_column_hide(c(conf.low, conf.high)) 
+
+Model2<- tbl_regression(logmodel_pc_grant_psm,
+                        include = "funding:post",
+                        estimate_fun = purrr::partial(style_ratio, digits = 9)) %>% 
+  modify_column_hide(c(conf.low, conf.high)) 
+
+ModelResults <- tbl_merge(
+  tbls = list(Model1, Model2),
+  tab_spanner = c("**Crime Rate per 100k**", "**Logged Crime Rate per 100k**")) %>% 
+  as_gt
+
+gtsave(ModelResults, "ModelResults.png")
+
+# Controlling for grants per 100k with controls
+model_pc_control_grant_psm <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
+                                      + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_psm)
+
+#Regressing log crime rate and controlling for grants per 100k with controls
+logmodel_pc_control_grant_psm <- feols(log_v_crime_rate ~ funding * post + pct_white + pct_bach_degree +
+                                         + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_psm)
+
+# No fixed effects controls
+model_pc_control_nofixed_psm <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
+                                        + unemployment_rate + poverty_rate, cluster = ~name, data = grants_did_psm)
+
+#--------------------------------------------------------------------------------------------------
+
+#filter control group for violent crime rates less than 3600 and greater than 500
+
+grants_did_crime_controlled <- filter(grants_did, funding2022==1 | violent_crime_pc > 500 & violent_crime_pc < 3600)
+
+crime_controlled_full_cities <- grants_did_crime_controlled %>% 
+  group_by(name) %>% 
+  count() %>% 
+  ungroup() %>% 
+  filter(n == 9) %>% 
+  pull(name)
+
+grants_did_crime_controlled <- grants_did_crime_controlled %>%
+  filter(name %in% crime_controlled_full_cities)
+
+#Sum stats for per capita covariates and crime filtered control group
+filter(grants_did_crime_controlled, funding2022==1) %>% 
+  sumstats()
+
+filter(grants_did_crime_controlled, funding2022==0) %>% 
+  sumstats()
+
+# Create treatment columns for crime controlled DiD regression
+grants_did_crime_controlled <- grants_did_crime_controlled %>% 
+  ## 1. City–level treatment status: 1 if the city ever got funding in 2022
+  group_by(place_id) %>%                           
+  mutate(treated = as.integer(any(funding2022 > 0))) %>% 
+  ungroup() %>% 
+  
+  ## 2. Post-treatment dummy: 1 for years on/after 2022
+  mutate(post = year >= 2022) %>% 
+  
+  ## 3. DiD interaction: 1 only for treated cities *and* post period
+  mutate(D = treated & post)
+
+# Parallel Trends for crime controlled DiD
+avg_crime_controleld <- grants_did_crime_controlled %>% 
+  group_by(year, treated) %>%                
+  summarise(mean_y = mean(violent_crime_pc, na.rm = TRUE), .groups = "drop")
+
+ggplot(avg_crime_controleld, aes(year, mean_y, colour = factor(treated))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = c("0" = "grey40", "1" = "steelblue"),
+                      labels  = c("Control", "Treated"),
+                      name    = "") +
+  labs(y = "Violent Crime per 100k")
+
+# Perform Crime controlled Regressions
+# Per capita - Base
+model_pc_crime_controlled <- feols(violent_crime_pc ~ treated * post | name + year, cluster = ~name, data = grants_did_crime_controlled)
+
+# Per capita - Controls
+model_pc_control_crime_controlled <- feols(violent_crime_pc ~ treated * post + pct_white + pct_bach_degree +
+                            + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_crime_controlled)
+
+# Controlling for grants per 100k
+model_pc_control_grant_crime_controlled <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
+                                  + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_crime_controlled)
+
+# No fixed effects controls
+model_pc_control_nofixed_crime_controlled <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
+                                                   + unemployment_rate + poverty_rate, cluster = ~name, data = grants_did_crime_controlled)
+
+#--------------------------------------------------------------------------------------------------
+
+#Rerunning everything after filtering out by cities with population greater than 375000
+grants_did_pop_con <- filter(grants_did, funding2022==1 | total_population > 375000)
+
+pop_con_full_cities <- grants_did_pop_con %>% 
+  group_by(name) %>% 
+  count() %>% 
+  ungroup() %>% 
+  filter(n == 9) %>% 
+  pull(name)
+
+grants_did_pop_con <- grants_did_pop_con %>%
+  filter(name %in% pop_con_full_cities)
+
+#Sum stats for per capita covariates and crime filtered control group
+filter(grants_did_pop_con, funding2022==1) %>% 
+  sumstats()
+
+filter(grants_did_pop_con, funding2022==0) %>% 
+  sumstats()
+
+# Create treatment columns for crime controlled DiD regression
+grants_did_pop_con <- grants_did_pop_con %>% 
+  ## 1. City–level treatment status: 1 if the city ever got funding in 2022
+  group_by(place_id) %>%                           
+  mutate(treated = as.integer(any(funding2022 > 0))) %>% 
+  ungroup() %>% 
+  
+  ## 2. Post-treatment dummy: 1 for years on/after 2022
+  mutate(post = year >= 2022) %>% 
+  
+  ## 3. DiD interaction: 1 only for treated cities *and* post period
+  mutate(D = treated & post)
+
+# Parallel Trends for crime controlled DiD
+avg_pop_con <- grants_did_pop_con %>% 
+  group_by(year, treated) %>%                
+  summarise(mean_y = mean(violent_crime_pc, na.rm = TRUE), .groups = "drop")
+
+
+ggplot(avg_pop_con, aes(year, mean_y, colour = factor(treated))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = c("0" = "grey40", "1" = "steelblue"),
+                      labels  = c("Control", "Treated"),
+                      name    = "") +
+  labs(y = "Violent Crime per 100k")
+
+logavg_pop_con <- grants_did_pop_con %>% 
+  group_by(year, treated) %>%                
+  summarise(mean_y = mean(log_v_crime_rate, na.rm = TRUE), .groups = "drop")
+
+ggplot(logavg_pop_con, aes(year, mean_y, colour = factor(treated))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = c("0" = "grey40", "1" = "steelblue"),
+                      labels  = c("Control", "Treated"),
+                      name    = "") +
+  labs(y = "Violent Crime per 100k")
+
+
+# Perform Crime controlled Regressions
+# Per capita - Base
+model_pc_pop_con <- feols(violent_crime_pc ~ treated * post | name + year, cluster = ~name, data = grants_did_pop_con)
+
+# Per capita - Controls
+model_pc_control_pop_con <- feols(violent_crime_pc ~ treated * post + pct_white + pct_bach_degree +
+                                             + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_pop_con)
+
+# Controlling for grants per 100k
+model_pc_grant_pop_con <- feols(violent_crime_pc ~ funding * post | name + year, cluster = ~name, data = grants_did_pop_con)
+
+logmodel_pc_grant_pop_con <- feols(log_v_crime_rate ~ funding * post | name + year, cluster = ~name, data = grants_did_pop_con)
+
+# Controlling for grants per 100k
+model_pc_control_grant_pop_con <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
+                                                   + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_pop_con)
+
+logmodel_pc_control_grant_pop_con <- feols(log_v_crime_rate ~ funding * post + pct_white + pct_bach_degree +
+                                          + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_pop_con)
+
+# No fixed effects controls
+model_pc_control_nofixed_pop_con <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
+                                                     + unemployment_rate + poverty_rate, cluster = ~name, data = grants_did_pop_con)
 
