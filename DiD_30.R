@@ -395,7 +395,29 @@ model_pc_grant <- feols(violent_crime_pc ~ funding * post | name + year, cluster
 model_pc_control_grant <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
                            + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did)
 
-model_pc_popcon_grant <- feols(violent_crime_pc ~ funding * post + total_population | name + year, cluster = ~name, data = grants_did)
+logmodel_pc_control_grant <- feols(log_v_crime_rate ~ funding * post + pct_white + pct_bach_degree +
+                                  + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did)
+
+
+#Create regression output table
+AllControlModel1<- tbl_regression(model_pc_control_grant_psm,
+                               "funding:post" ~ "Treatment Effect",
+                               include = "funding:post",
+                               estimate_fun = purrr::partial(style_ratio, digits = 7),
+                               conf.int=F)
+
+AllControlModel2<- tbl_regression(logmodel_pc_control_grant_psm,
+                               "funding:post" ~ "Treatment Effect",
+                               include = "funding:post",
+                               estimate_fun = purrr::partial(style_sigfig, digits = 7),
+                               conf.int= F)
+
+AllControlModelResults <- tbl_merge(
+  tbls = list(ControlModel1, ControlModel2),
+  tab_spanner = c("**Crime Rate per 100k**", "**Logged Crime Rate per 100k**")) %>% 
+  as_gt
+
+gtsave(ControlModelResults, "ControlModelResults.png")
 
 logmodel_pc_control_grant <- feols(log_v_crime_rate ~ funding * post + pct_white + pct_bach_degree +
                                   + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did)
@@ -437,7 +459,12 @@ grants_match <- grants_did %>%
 #Find two control cities for each treated city by choosing control cities that
 #are most likely to be chosen to receive funding based on total population and
 #present results
-funding_match <- matchit(funding2022 ~ total_population,
+funding_match <- matchit(funding2022 ~ total_population + 
+                                       violent_crime_pc + 
+                                       pct_white +
+                                       pct_bach_degree + 
+                                       unemployment_rate + 
+                                       poverty_rate,
                          data = grants_match, method = "nearest", distance ="glm",
                          ratio = 2,
                          replace = FALSE)
@@ -452,8 +479,22 @@ grants_did_psm_controls <- grants_match[funding_match[["match.matrix"]],]$name
 #as matched controls
 grants_did_psm <- filter(grants_did, funding2022==1 | name %in% grants_did_psm_controls)
 
+grants_did <- mutate(grants_did, treated = case_when(treated == 0 ~ 2))
+grants_did <- filter(grants_did, treated== 2)
+
+grants_did_final <- rbind(grants_did, grants_did_psm)
 
 #Sum stats for per capita covariates from the PSM chosen control group
+filter(grants_did_final, treated==1) %>% 
+  sumstats()
+
+filter(grants_did_final, treated==0) %>% 
+  sumstats()
+
+filter(grants_did_final, treated==2) %>% 
+  sumstats()
+
+
 filter(grants_did_psm, funding2022==1) %>% 
   sumstats()
 
@@ -464,6 +505,11 @@ filter(grants_did_psm, funding2022==0) %>%
 grants_did_psm <- grants_did_psm %>% mutate(CVIP_funding = case_when(
   funding2022 == 0 ~ "Did Not Receive CVIP Funding",
   funding2022 == 1 ~ "Received CVIP Funding"))
+
+grants_did_final <- grants_did_final %>% mutate(CVIP_funding = case_when(
+  treated == 0 ~ "Propensity Score Matched",
+  treated == 1 ~ "Received CVIP Funding",
+  treated == 2 ~ "All Possible Control Cities"))
 
 my_theme <-
   list(
@@ -493,7 +539,26 @@ tbl_summary(
   modify_header(label ~ "**Variable**") %>% 
   as_gt()
 
+SummaryStatsFinal <- group_by(grants_did_final, CVIP_funding) %>%                
+  select(funding, violent_crime_pc, total_population) %>% 
+  tbl_summary(
+    by = CVIP_funding,
+    list(
+      violent_crime_pc ~ "Crime Rate per 100,000 People",
+      total_population ~ "Total Population",
+      funding ~ "CVIP Grant Spending per 100,000 People"),
+    type = all_continuous() ~ "continuous2",
+    statistic = all_continuous() ~ c(
+      "{median}",
+      "{mean} ({sd})")
+  ) %>%
+  bold_labels() %>%
+  modify_header(label ~ "**Variable**") %>% 
+  as_gt()
+
 gtsave(SummaryStats, "SummaryStatistics.png")
+
+gtsave(SummaryStatsFinal, "FinalSummaryStatistics.png", )
 
 
 # Create treatment columns for PSM chosen control group DiD regression
@@ -514,7 +579,6 @@ avg_psm <- grants_did_psm %>%
   group_by(year, treated) %>%                
   summarise(mean_y = mean(violent_crime_pc, na.rm = TRUE), .groups = "drop")
 
-
 ParallelTrendsPlot <- ggplot(avg_psm, aes(year, mean_y, colour = factor(treated))) +
   geom_line() + geom_point() +
   scale_colour_manual(values = c("0" = "grey40", "1" = "gold"),
@@ -523,6 +587,22 @@ ParallelTrendsPlot <- ggplot(avg_psm, aes(year, mean_y, colour = factor(treated)
   labs(y = "Violent Crime per 100k", x= "Year")
 
 ggsave(filename = "ParallelTrendsPlot.png", plot = ParallelTrendsPlot, height = 3.5, width = 4)
+
+avg_final <- grants_did_final %>% 
+  group_by(year, treated) %>%                
+  summarise(mean_y = mean(violent_crime_pc, na.rm = TRUE), .groups = "drop")
+
+FinalParallelTrendsPlot <- ggplot(avg_final, aes(year, mean_y, colour = factor(treated))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = c("0" = "grey40", "1" = "gold", "2" = "black"),
+                      labels  = c("Propensity Score Matched", 
+                                  "Treated", 
+                                  "All Possible Control Cities"),
+                      name    = "") +
+  labs(y = "Violent Crime per 100k", x= "Year")
+
+ggsave(filename = "FinalParallelTrendsPlot.png", plot = FinalParallelTrendsPlot, height = 3, width = 6.5)
+
 
 # Parallel Trends for Logged Violent Crime RateDiD with PSM control group
 
@@ -538,6 +618,21 @@ LogParallelTrendsPlot <- ggplot(logavg_psm, aes(year, mean_y, colour = factor(tr
   labs(y = "Logged Violent Crime per 100k", x= "Year")
 
 ggsave(filename = "LogParallelTrendsPlot.png", plot = LogParallelTrendsPlot, height = 3.5, width = 4)
+
+logavg_final <- grants_did_final %>% 
+  group_by(year, treated) %>%                
+  summarise(mean_y = mean(log_v_crime_rate, na.rm = TRUE), .groups = "drop")
+
+FinalLogParallelTrendsPlot <- ggplot(logavg_final, aes(year, mean_y, colour = factor(treated))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = c("0" = "grey40", "1" = "gold", "2" = "black"),
+                      labels  = c("Propensity Score Matched", 
+                                  "Treated", 
+                                  "All Possible COntrol Cities"),
+                      name    = "") +
+  labs(y = "Violent Crime per 100k", x= "Year")
+
+ggsave(filename = "FinalLogParallelTrendsPlot.png", plot = FinalLogParallelTrendsPlot, height = 3.5, width = 6)
 
 
 # Perform Regressions with PSM chosen control group
@@ -581,6 +676,48 @@ model_pc_control_grant_psm <- feols(violent_crime_pc ~ funding * post + pct_whit
 #Regressing log crime rate and controlling for grants per 100k with controls
 logmodel_pc_control_grant_psm <- feols(log_v_crime_rate ~ funding * post + pct_white + pct_bach_degree +
                                          + unemployment_rate + poverty_rate | name + year, cluster = ~name, data = grants_did_psm)
+
+
+#Create regression output table
+ControlModel1<- tbl_regression(model_pc_control_grant_psm,
+                        "funding:post" ~ "Treatment Effect",
+                        include = "funding:post",
+                        estimate_fun = purrr::partial(style_ratio, digits = 7),
+                        conf.int=F)
+
+ControlModel2<- tbl_regression(logmodel_pc_control_grant_psm,
+                        "funding:post" ~ "Treatment Effect",
+                        include = "funding:post",
+                        estimate_fun = purrr::partial(style_sigfig, digits = 7),
+                        conf.int= F)
+
+ControlModelResults <- tbl_merge(
+  tbls = list(ControlModel1, ControlModel2),
+  tab_spanner = c("**Crime Rate per 100k**", "**Logged Crime Rate per 100k**")) %>% 
+  as_gt
+
+gtsave(ControlModelResults, "ControlModelResults.png")
+
+#Create regression output table
+FinalModel1<- tbl_regression(model_pc_control_grant_psm,
+                               "funding:post" ~ "Treatment Effect",
+                               include = "funding:post",
+                               estimate_fun = purrr::partial(style_ratio, digits = 7),
+                               conf.int=F)
+
+FinalModel2<- tbl_regression(model_pc_control_grant,
+                               "funding:post" ~ "Treatment Effect",
+                               include = "funding:post",
+                               estimate_fun = purrr::partial(style_sigfig, digits = 7),
+                               conf.int= F)
+
+FinalModelResults <- tbl_merge(
+  tbls = list(FinalModel1, FinalModel2),
+  tab_spanner = c("**Propensity Score Matched**", "**All Possible Control Cities**")) %>% 
+  as_gt
+
+gtsave(FinalModelResults, "FinalModelResults.png")
+
 
 # No fixed effects controls
 model_pc_control_nofixed_psm <- feols(violent_crime_pc ~ funding * post + pct_white + pct_bach_degree +
